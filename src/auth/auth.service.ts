@@ -1,4 +1,4 @@
-import { Injectable, BadRequestException, NotFoundException, UnauthorizedException } from '@nestjs/common';
+import { Injectable, BadRequestException, NotFoundException } from '@nestjs/common';
 import { PrismaService } from 'src/prisma/prisma.service';
 import { MailService } from 'src/mail/mail.service';
 import * as bcrypt from 'bcryptjs'
@@ -16,79 +16,69 @@ export class AuthService {
     private readonly jwtService: JwtService, 
     private readonly configService: ConfigService,
   ) {}
-  
   async sendOtp(email: string) {
+    console.log('Đang gửi OTP qua gmail:', email);
     const user = await this.prisma.user.findUnique({ where: { email } });
-    if (!user) throw new NotFoundException('Không tìm thấy người dùng');
+    if (!user) throw new NotFoundException('Không tìm thấy người dùng với email này');
 
-    // Tạo OTP và lưu vào DB
     const otp = Math.floor(100000 + Math.random() * 900000).toString();
+    const expires = new Date(Date.now() + 5 * 60 * 1000);
+
     await this.prisma.user.update({
       where: { email },
-      data: { 
+      data: { otpCode: otp, otpExpires: expires },
+    });
+
+    await this.mailService.sendMail({
+      to: email,
+      subject: 'OTP từ chat app',
+      text: `OTP của bạn là ${otp}. Nó sẽ hết hiệu lực sau 5 phút.`,
+    });
+
+    return { message: 'Đã gửi OTP qua email' };
+  }
+
+  async verifyOtp( otp: string) {
+    const user = await this.prisma.user.findFirst({
+      where: {
+   
         otpCode: otp,
-        otpExpires: new Date(Date.now() + 5 * 60 * 1000), // Hết hạn sau 5 phút
+        otpExpires: { gte: new Date() },
       },
     });
 
-    // Tạo JWT token chứa email (không chứa OTP)
-    const token = this.jwtService.sign(
-      { email }, 
-      { expiresIn: '10m' }, // Token hết hạn sau 10 phút
-    );
+    if (!user) throw new BadRequestException('OTP không hợp lệ hoặc đã hết hạn');
 
-    return { 
-      message: 'OTP đã được gửi qua email (mô phỏng)',
-      token, // Trả token cho client
-    };
+    return { message: 'OTP hợp lệ' };
   }
 
-  async resetPassword(
-    newPassword: string,
-    confirmPassword: string,
-    token: string,
-  ) {
-    // Giải mã token để lấy email
-    let email: string;
-    try {
-      const payload = this.jwtService.verify(token);
-      email = payload.email;
-    } catch (error) {
-      throw new UnauthorizedException('Token không hợp lệ hoặc đã hết hạn');
-    }
+  async resetPassword(email: string, otp: string, newPassword: string) {
+      
+      const user = await this.prisma.user.findFirst({
+          where: {
+              email,
+              otpCode: otp,
+              otpExpires: { gte: new Date() },
+            },
+        });
+        console.log('User found:', user);
 
-    // Kiểm tra mật khẩu trùng khớp
-    if (newPassword !== confirmPassword) {
-      throw new BadRequestException('Mật khẩu không khớp');
-    }
+    if (!user) throw new BadRequestException('OTP không còn hiệu lực hoặc không hợp lệ');
 
-    // Hash mật khẩu mới và lưu vào DB
-    const hashedPassword = await bcrypt.hash(newPassword, 10);
+
+    const hashed = await bcrypt.hash(newPassword, 10);
     await this.prisma.user.update({
       where: { email },
-      data: { 
-        password: hashedPassword,
-        otpCode: null, // Xóa OTP sau khi đổi mật khẩu
+      data: {
+        password: hashed,
+        otpCode: null,
         otpExpires: null,
       },
     });
 
     return { message: 'Đặt lại mật khẩu thành công' };
   }
-  async verifyOtp(otp: string) {
-    const user = await this.prisma.user.findFirst({
-      where: {
-        otpCode: otp,
-        otpExpires: { gte: new Date() }, // Kiểm tra xem OTP có còn hiệu lực không
-      },
-    });
 
-    if (!user) {
-      throw new BadRequestException('OTP không hợp lệ hoặc đã hết hạn');
-    }
-
-    return { message: 'OTP hợp lệ' };
-  }
   async googleLogin(token: string) {
     try {
       // Xác minh ID Token từ Google
