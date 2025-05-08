@@ -1,0 +1,106 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id          String    @id @default(uuid())
+  name        String
+  email       String    @unique
+  password    String
+  avatar      String?
+  otpCode     String?
+  otpExpires  DateTime?
+  isDeleted   Boolean   @default(false)
+  deletedAt   DateTime?
+  updatedAt DateTime @updatedAt @default(now())
+ createdAt DateTime @default(now())  
+
+  sentMessages     Message[]         @relation("UserSentMessages")
+  chatParticipants ChatParticipant[]
+  messageReads     MessageRead[]
+} 
+
+model Chat {
+  id        String    @id @default(uuid())
+  name      String? // Tên nhóm chat, có thể null cho 1-1
+  isGroup   Boolean   @default(false)
+  createdAt DateTime  @default(now())
+  expiresAt DateTime?
+  deletedAt DateTime?
+
+  participants ChatParticipant[]
+  messages     Message[]
+}
+
+model ChatParticipant {
+  id       String   @id @default(uuid())
+  chatId   String
+  userId   String
+  role     ChatRole @default(MEMBER)
+  joinedAt DateTime @default(now())
+
+  chat Chat @relation(fields: [chatId], references: [id], onDelete: Cascade)
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([chatId, userId])
+}
+
+model Message {
+  id               String        @id @default(uuid())
+  chatId           String
+  senderId         String
+  content          String?
+  type             MessageType   @default(TEXT)
+  attachments      Json?
+  status           MessageStatus @default(SENT)
+  repliedMessageId String?
+  createdAt        DateTime      @default(now())
+  updatedAt        DateTime?
+  deletedAt        DateTime?
+
+  chat           Chat      @relation(fields: [chatId], references: [id], onDelete: Cascade)
+  sender         User      @relation("UserSentMessages", fields: [senderId], references: [id], onDelete: Cascade)
+  repliedMessage Message?  @relation("MessageToReply", fields: [repliedMessageId], references: [id])
+  replies        Message[] @relation("MessageToReply")
+
+  messageReads MessageRead[]
+
+  @@index([chatId])
+  @@index([senderId])
+}
+
+model MessageRead {
+  id        String   @id @default(uuid())
+  messageId String
+  userId    String
+  readAt    DateTime @default(now())
+
+  message Message @relation(fields: [messageId], references: [id], onDelete: Cascade)
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([messageId, userId])
+}
+
+enum ChatRole {
+  OWNER
+  ADMIN
+  MEMBER
+}
+
+enum MessageType {
+  TEXT
+  IMAGE
+  VIDEO
+  FILE
+}
+
+enum MessageStatus {
+  SENT
+  DELIVERED
+  READ
+}
